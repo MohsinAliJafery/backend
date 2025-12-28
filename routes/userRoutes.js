@@ -16,7 +16,8 @@ router.post("/sync", protect, async (req, res) => {
     let user = await User.findOne({ uid });
 
     if (!user) {
-      // Create new user
+      console.log("User not found, creating new user:", uid);
+      console.log("User data:", { uid, name, email, photoURL, provider });
       user = await User.create({
         uid,
         name,
