@@ -17,4 +17,4 @@ const setAdmin = async (uid) => {
 };
 
 // Example
-setAdmin("I0fyGJ9m1sb48bzTv4bp9euxqd33");
+setAdmin("0xAPUT9S47RdRiEnKpLi3nEbdbl2");

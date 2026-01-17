@@ -48,7 +48,7 @@ switch (subscriptionType) {
     break;
 
   case 'yearly_sub':
-    amount = settings.yearlyPrice.toString(); // 🔥 ADD THIS
+    amount = settings.yearlyPrice.toString();
     break;
 
   case 'trial_days':
@@ -166,191 +166,155 @@ exports.capturePaypalOrder = async (req, res) => {
   }
 };
 
-// @desc    Initiate PayTM payment
-// @route   POST /api/payments/paytm/initiate
-// @access  Private
-exports.initiatePaytmPayment = async (req, res) => {
-  try {
-    const { subscriptionType } = req.body;
+// // @desc    Initiate PayTM payment
+// // @route   POST /api/payments/paytm/initiate
+// // @access  Private
+// exports.initiatePaytmPayment = async (req, res) => {
+//   try {
+//     const { subscriptionType, amount, currency, user } = req.body;
+
+//       console.log("Paytm initiate payload:", {
+//       subscriptionType,
+//       amount,
+//       currency,
+//       user
+//     });
+
+//     // Get settings from Firebase or default
+//     let settings = { 
+//       weeklyPrice: 9.99, 
+//       monthlyPrice: 29.99,
+//       yearlyPrice: 299.99,
+//       currency: "INR"
+//     };
+
+//     // Generate order ID
+//     const orderId = 'ORDER_' + Date.now() + '_' + Math.random().toString(36).substr(2, 9);
     
-    // Get settings from Firebase or default
-    let settings = { 
-      weeklyPrice: 9.99, 
-      monthlyPrice: 29.99,
-      yearlyPrice: 299.99,
-      currency: "INR"  // PayTM uses INR
-    };
+//     const transaction = await Transaction.create({
+//       user: user.uid,
+//       amount,
+//       currency: 'INR',
+//       paymentMethod: 'paytm',
+//       paymentId: orderId,
+//       orderId: orderId,
+//       subscriptionType,
+//       status: 'pending'
+//     });
+
+//     // Prepare PayTM parameters
+//     const paytmParams = {
+//       MID: process.env.PAYTM_MERCHANT_ID,
+//       ORDER_ID: orderId,
+//       CUST_ID: user.uid || user.id || 'guest',
+//       INDUSTRY_TYPE_ID: process.env.PAYTM_INDUSTRY_TYPE_ID || 'Retail',
+//       CHANNEL_ID: process.env.PAYTM_CHANNEL_ID || 'WEB',
+//       TXN_AMOUNT: amount.toString(),
+//       WEBSITE: process.env.PAYTM_WEBSITE || 'WEBSTAGING',
+//       CALLBACK_URL: process.env.PAYTM_CALLBACK_URL || 'http://localhost:5000/payments/paytm/callback',
+//       EMAIL: user.email || 'test@example.com',
+//       MOBILE_NO: user.phone || '9999999999'
+//     };
+
+//     // Generate checksum
+//     const checksum = await PaytmChecksum.generateSignature(
+//       paytmParams,
+//       process.env.PAYTM_MERCHANT_KEY || 'l%FAgDhj0#KDK274'
+//     );
+
+//     res.json({
+//       success: true,
+//       data: {
+//         orderId,
+//         transactionId: transaction._id,
+//         paytmParams,
+//         checksum
+//       }
+//     });
+//   } catch (error) {
+//     console.error('PayTM initiation error:', error);
+//     res.status(500).json({
+//       success: false,
+//       message: error.message || 'Failed to initiate PayTM payment'
+//     });
+//   }
+// };
+
+// // @desc    PayTM callback
+// // @route   POST /api/payments/paytm/callback
+// // @access  Public
+// // CORRECTED paytmCallback:
+// exports.paytmCallback = async (req, res) => {
+//   try {
+//     console.log('PayTM Callback received:', req.body);
     
-    let amount;
-    switch (subscriptionType) {
-      case 'weekly_sub':
-        amount = settings.weeklyPrice;
-        break;
-      case 'monthly_sub':
-        amount = settings.monthlyPrice;
-        break;
-      case 'yearly_sub':
-        amount = settings.yearlyPrice;
-        break;
-      case 'trial_days':
-        amount = 1; // Minimum amount for PayTM
-        break;
-      default:
-        return res.status(400).json({
-          success: false,
-          message: 'Invalid subscription type'
-        });
-    }
-
-    // Generate order ID
-    const orderId = 'ORDER_' + Date.now() + '_' + Math.random().toString(36).substr(2, 9);
+//     const paytmChecksum = req.body.CHECKSUMHASH;
+//     const orderId = req.body.ORDERID;
     
-    // Get user info
-    const user = req.user || JSON.parse(req.headers.user || '{}');
-    
-    const transaction = await Transaction.create({
-      user: user.uid || user.id || 'unknown',
-      amount,
-      currency: 'INR', // PayTM uses INR
-      paymentMethod: 'paytm',
-      paymentId: orderId,
-      orderId: orderId,
-      subscriptionType,
-      status: 'pending'
-    });
+//     // 1. Verify signature
+//     const isVerifySignature = await PaytmChecksum.verifySignature(
+//       req.body,
+//       process.env.PAYTM_MERCHANT_KEY,
+//       paytmChecksum
+//     );
 
-    // Prepare PayTM parameters
-    const paytmParams = {
-      MID: process.env.PAYTM_MERCHANT_ID || 'wGTGuY25794243710156',
-      ORDER_ID: orderId,
-      CUST_ID: user.uid || user.id || 'guest',
-      INDUSTRY_TYPE_ID: process.env.PAYTM_INDUSTRY_TYPE_ID || 'Retail',
-      CHANNEL_ID: process.env.PAYTM_CHANNEL_ID || 'WEB',
-      TXN_AMOUNT: amount.toString(),
-      WEBSITE: process.env.PAYTM_WEBSITE || 'WEBSTAGING',
-      CALLBACK_URL: process.env.PAYTM_CALLBACK_URL || 'http://localhost:5000/api/payments/paytm/callback',
-      EMAIL: user.email || 'test@example.com',
-      MOBILE_NO: user.phone || '9999999999'
-    };
+//     if (!isVerifySignature) {
+//       console.error('Checksum mismatch for order:', orderId);
+//       return res.status(400).json({
+//         success: false,
+//         message: 'Checksum mismatched'
+//       });
+//     }
 
-    // Generate checksum
-    const checksum = await PaytmChecksum.generateSignature(
-      paytmParams,
-      process.env.PAYTM_MERCHANT_KEY || 'l%FAgDhj0#KDK274'
-    );
+//     // 2. Update transaction in database
+//     const transaction = await Transaction.findOneAndUpdate(
+//       { orderId: orderId },
+//       {
+//         status: req.body.STATUS === 'TXN_SUCCESS' ? 'completed' : 'failed',
+//         completedAt: new Date(),
+//         payerEmail: req.body.EMAIL,
+//         payerName: req.body.CUST_ID,
+//         paytmResponse: req.body
+//       },
+//       { new: true }
+//     );
 
-    res.json({
-      success: true,
-      data: {
-        orderId,
-        transactionId: transaction._id,
-        paytmParams,
-        checksum
-      }
-    });
-  } catch (error) {
-    console.error('PayTM initiation error:', error);
-    res.status(500).json({
-      success: false,
-      message: error.message || 'Failed to initiate PayTM payment'
-    });
-  }
-};
+//     if (!transaction) {
+//       console.error('Transaction not found:', orderId);
+//       return res.status(404).json({
+//         success: false,
+//         message: 'Transaction not found'
+//       });
+//     }
 
-// @desc    PayTM callback
-// @route   POST /api/payments/paytm/callback
-// @access  Public
-exports.paytmCallback = async (req, res) => {
-  try {
-    const paytmChecksum = req.body.CHECKSUMHASH;
-    
-    // Verify signature
-    const isVerifySignature = await PaytmChecksum.verifySignature(
-      req.body,
-      process.env.PAYTM_MERCHANT_KEY || 'l%FAgDhj0#KDK274',
-      paytmChecksum
-    );
-
-    if (isVerifySignature) {
-      if (req.body.STATUS === 'TXN_SUCCESS') {
-        // Update transaction status
-        await Transaction.findOneAndUpdate(
-          { orderId: req.body.ORDERID },
-          {
-            status: 'completed',
-            completedAt: new Date(),
-            payerEmail: req.body.EMAIL,
-            payerName: req.body.CUST_ID,
-            paytmResponse: req.body
-          }
-        );
-        
-        // Update user subscription in Firebase
-        const transaction = await Transaction.findOne({ orderId: req.body.ORDERID });
-        if (transaction) {
-          const user = JSON.parse(localStorage.getItem("user"));
-          if (user) {
-            const uid = user.uid;
-            
-            // Get plan days from settings
-            // This would need to come from your database
-            const planDays = {
-              'weekly_sub': 7,
-              'monthly_sub': 30,
-              'yearly_sub': 365,
-              'trial_days': 7
-            };
-            
-            const days = planDays[transaction.subscriptionType] || 7;
-            
-            const parentRef = ref(database, `parents/${uid}`);
-            const snapshot = await get(parentRef);
-            
-            const now = Date.now();
-            const currentExpiry = snapshot.exists() 
-              ? snapshot.val()?.subscription?.expiryDate || 0 
-              : 0;
-            
-            const baseTime = currentExpiry > now ? currentExpiry : now;
-            const newExpiryDate = baseTime + days * 24 * 60 * 60 * 1000;
-            
-            await update(parentRef, {
-              subscription: { 
-                expiryDate: newExpiryDate,
-                plan: transaction.subscriptionType,
-                updatedAt: Date.now()
-              }
-            });
-          }
-        }
-        
-        // Redirect to success page
-        res.redirect(`${process.env.CLIENT_URL || 'http://localhost:3000'}/payment/success`);
-      } else {
-        await Transaction.findOneAndUpdate(
-          { orderId: req.body.ORDERID },
-          { 
-            status: 'failed',
-            paytmResponse: req.body
-          }
-        );
-        res.redirect(`${process.env.CLIENT_URL || 'http://localhost:3000'}/payment/failed`);
-      }
-    } else {
-      console.error('Checksum mismatch');
-      res.status(400).json({
-        success: false,
-        message: 'Checksum mismatched'
-      });
-    }
-  } catch (error) {
-    console.error('PayTM callback error:', error);
-    res.status(500).json({
-      success: false,
-      message: error.message
-    });
-  }
-};
+//     // 3. If successful, mark for subscription update
+//     if (req.body.STATUS === 'TXN_SUCCESS') {
+//       // Set a flag or queue for subscription update
+//       await Transaction.findByIdAndUpdate(
+//         transaction._id,
+//         { subscriptionUpdateRequired: true }
+//       );
+      
+//       console.log('Payment successful for transaction:', orderId);
+      
+//       // Redirect to frontend success page with order ID
+//       return res.redirect(
+//         `${process.env.CLIENT_URL || 'http://localhost:3000'}/payment/success?orderId=${orderId}`
+//       );
+//     } else {
+//       console.log('Payment failed for transaction:', orderId);
+//       return res.redirect(
+//         `${process.env.CLIENT_URL || 'http://localhost:3000'}/payment/failed?orderId=${orderId}`
+//       );
+//     }
+//   } catch (error) {
+//     console.error('PayTM callback error:', error);
+//     return res.status(500).json({
+//       success: false,
+//       message: error.message
+//     });
+//   }
+// };
 
 // @desc    Get user transactions
 // @route   GET /api/payments/transactions
@@ -369,5 +333,262 @@ exports.getUserTransactions = async (req, res) => {
       success: false,
       message: error.message
     });
+  }
+};
+
+exports.initiatePaytmPayment = async (req, res) => {
+  try {
+    const { subscriptionType, amount, currency, user } = req.body;
+    
+    console.log('PayTM initiation request:', {
+      subscriptionType,
+      amount,
+      currency,
+      userId: user?.uid
+    });
+    
+    if (!subscriptionType || !amount || !user?.uid) {
+      return res.status(400).json({ 
+        success: false, 
+        message: 'Missing required fields' 
+      });
+    }
+
+    // Get settings from database
+    let settings = await Settings.findOne();
+    if (!settings) {
+      settings = await Settings.create({
+        freeTrialDays: 7,
+        weeklyPrice: 9.99,
+        monthlyPrice: 29.99,
+        yearlyPrice: 299.99,
+        currency: 'INR', // Force INR for PayTM
+        paypalEnabled: true,
+        paytmEnabled: true
+      });
+    }
+
+    // Use the BASE_URL from .env
+    const baseUrl = process.env.BASE_URL || 'http://localhost:5000';
+    
+    console.log('Base URL for callback:', baseUrl);
+
+    // Generate order ID
+    const orderId = `ORDER_${Date.now()}_${Math.random().toString(36).substr(2, 9)}`;
+    
+    // Create transaction record
+    const transaction = await Transaction.create({
+      user: user.uid,
+      amount: parseFloat(amount),
+      currency: 'INR', // Force INR for PayTM
+      paymentMethod: 'paytm',
+      paymentId: orderId,
+      orderId: orderId,
+      subscriptionType,
+      status: 'pending'
+    });
+
+    // PayTM parameters
+    const paytmParams = {
+      MID: process.env.PAYTM_MERCHANT_ID,
+      ORDER_ID: orderId,
+      CUST_ID: user.uid,
+      INDUSTRY_TYPE_ID: process.env.PAYTM_INDUSTRY_TYPE_ID || 'Retail',
+      CHANNEL_ID: process.env.PAYTM_CHANNEL_ID || 'WEB',
+      TXN_AMOUNT: amount.toString(),
+      WEBSITE: process.env.PAYTM_WEBSITE || 'WEBSTAGING',
+      CALLBACK_URL: `${baseUrl}/api/payments/paytm/callback`,
+      EMAIL: user.email || 'customer@example.com',
+      MOBILE_NO: user.phone || '9999999999'
+    };
+    
+    console.log('Generated PayTM Params:', paytmParams);
+
+    // Generate checksum
+    const merchantKey = process.env.PAYTM_MERCHANT_KEY;
+    if (!merchantKey) {
+      throw new Error('PAYTM_MERCHANT_KEY not configured');
+    }
+    
+    const checksum = await PaytmChecksum.generateSignature(paytmParams, merchantKey);
+    
+    console.log('Checksum generated successfully');
+
+    // IMPORTANT: Return the structure that frontend expects
+    res.json({
+      success: true,
+      message: 'PayTM order created',
+      data: {
+        orderId,
+        transactionId: transaction._id,
+        paytmParams: { // This should contain ALL parameters including checksum
+          ...paytmParams,
+          CHECKSUMHASH: checksum
+        },
+        // These are optional but good for debugging
+        _debug: {
+          callbackUrl: paytmParams.CALLBACK_URL,
+          checksumLength: checksum.length,
+          environment: process.env.NODE_ENV
+        }
+      }
+    });
+
+  } catch (error) {
+    console.error('PayTM initiation error:', error);
+    res.status(500).json({ 
+      success: false, 
+      message: error.message
+    });
+  }
+};
+
+exports.paytmCallback = async (req, res) => {
+  try {
+    console.log('========== PAYTM CALLBACK RECEIVED ==========');
+    console.log('Method:', req.method);
+    console.log('Raw body:', req.body);
+    
+    const callbackData = req.body;
+    
+    if (!callbackData || Object.keys(callbackData).length === 0) {
+      console.error('Empty callback data received');
+      return res.status(400).send('Invalid callback data');
+    }
+    
+    const {
+      ORDERID,
+      MID,
+      TXNAMOUNT,
+      CURRENCY,
+      STATUS,
+      RESPCODE,
+      RESPMSG,
+      BANKTXNID,
+      TXNDATE,
+      GATEWAYNAME,
+      PAYMENTMODE,
+      CHECKSUMHASH
+    } = callbackData;
+    
+    console.log('Parsed callback data:', {
+      ORDERID,
+      MID,
+      TXNAMOUNT,
+      STATUS,
+      RESPCODE,
+      RESPMSG,
+      HAS_CHECKSUM: !!CHECKSUMHASH,
+      CHECKSUMHASH: CHECKSUMHASH ? `${CHECKSUMHASH.substring(0, 20)}...` : 'Missing'
+    });
+    
+    // For failed transactions, PayTM might not send checksum
+    // We should still process the callback
+    if (CHECKSUMHASH) {
+      const merchantKey = process.env.PAYTM_MERCHANT_KEY;
+      const isValidChecksum = await PaytmChecksum.verifySignature(
+        callbackData,
+        merchantKey,
+        CHECKSUMHASH
+      );
+      
+      console.log('Checksum verification:', isValidChecksum);
+      
+      if (!isValidChecksum) {
+        console.warn('Invalid checksum received. Proceeding with caution...');
+        // You might want to log this but still process for failed transactions
+      }
+    } else {
+      console.warn('No checksum received. This is normal for failed transactions.');
+    }
+    
+    // Process the transaction based on status
+    const frontendUrl = process.env.FRONTEND_URL || 'http://localhost:3000';
+    
+    if (STATUS === 'TXN_SUCCESS') {
+      console.log('Payment SUCCESSFUL:', ORDERID);
+      
+      // TODO: Update database with successful payment
+      // await processSuccessfulPayment(callbackData);
+      
+      return res.redirect(
+        `${frontendUrl}/payment-success?orderId=${ORDERID}&amount=${TXNAMOUNT}&status=success`
+      );
+      
+    } else if (STATUS === 'PENDING') {
+      console.log('Payment PENDING:', ORDERID);
+      return res.redirect(
+        `${frontendUrl}/payment-pending?orderId=${ORDERID}&status=pending`
+      );
+      
+    } else {
+      // TXN_FAILURE or other statuses
+      console.log('Payment FAILED:', {
+        orderId: ORDERID,
+        status: STATUS,
+        code: RESPCODE,
+        message: RESPMSG
+      });
+      
+      // TODO: Update database with failed payment
+      // await processFailedPayment(callbackData);
+      
+      return res.redirect(
+        `${frontendUrl}/payment-failed?orderId=${ORDERID}&status=${STATUS}&code=${RESPCODE}&message=${encodeURIComponent(RESPMSG)}`
+      );
+    }
+    
+  } catch (error) {
+    console.error('PayTM callback processing error:', error);
+    
+    const frontendUrl = process.env.FRONTEND_URL || 'http://localhost:3000';
+    return res.redirect(
+      `${frontendUrl}/payment-error?message=${encodeURIComponent(error.message)}`
+    );
+  }
+};
+
+// Add this to your paymentController.js
+
+exports.testPayment = async (req, res) => {
+  try {
+    const { amount, plan } = req.body;
+    
+    // Generate test order ID
+    const orderId = `TEST_${Date.now()}_${Math.random().toString(36).substr(2, 9)}`;
+    
+    // Create mock PayTM response
+    const mockParams = {
+      ORDERID: orderId,
+      MID: process.env.PAYTM_MERCHANT_ID,
+      TXNAMOUNT: amount || '0.09',
+      CURRENCY: 'INR',
+      STATUS: 'TXN_SUCCESS',
+      RESPCODE: '01',
+      RESPMSG: 'Payment successful',
+      BANKTXNID: `BANK${Date.now()}`,
+      TXNDATE: new Date().toISOString(),
+      GATEWAYNAME: 'TEST',
+      PAYMENTMODE: 'TEST',
+      CHECKSUMHASH: 'testchecksum1234567890abcdef1234567890abcdef1234567890abcdef1234567890abcdefabcd'
+    };
+    
+    // Process successful payment
+    const user = req.body.user || { uid: 'test_user' };
+    
+    res.json({
+      success: true,
+      message: 'Test payment created',
+      data: {
+        orderId,
+        redirectUrl: `${process.env.FRONTEND_URL}/payment-success?orderId=${orderId}&status=TXN_SUCCESS&amount=${amount || '0.09'}`,
+        mockParams,
+        note: 'Use this for testing without actual PayTM'
+      }
+    });
+    
+  } catch (error) {
+    console.error('Test payment error:', error);
+    res.status(500).json({ success: false, message: error.message });
   }
 };
