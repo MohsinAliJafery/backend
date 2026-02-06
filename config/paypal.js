@@ -5,7 +5,7 @@ let environment;
 let client;
 
 try {
-  if (process.env.NODE_ENV === 'production') {
+  if (process.env.PAYPAL_MODE === 'live') {
     environment = new paypal.core.LiveEnvironment(
       process.env.PAYPAL_CLIENT_ID,
       process.env.PAYPAL_CLIENT_SECRET

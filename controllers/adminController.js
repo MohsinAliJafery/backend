@@ -1,6 +1,78 @@
 const User = require('../models/User');
 const Transaction = require('../models/Transaction');
 const Settings = require('../models/Settings');
+const admin = require('../firebase-admin');
+
+// Middleware to verify admin token
+const verifyAdmin = async (req, res, next) => {
+  try {
+    const token = req.headers.authorization?.split(' ')[1];
+    if (!token) {
+      return res.status(401).json({ success: false, message: 'No token provided' });
+    }
+    
+    const decodedToken = await admin.auth().verifyIdToken(token);
+    // Check if user is admin (you need to set custom claims in Firebase)
+    if (decodedToken.admin !== true) {
+      return res.status(403).json({ success: false, message: 'Not authorized' });
+    }
+    
+    req.user = decodedToken;
+    next();
+  } catch (error) {
+    console.error('Token verification error:', error);
+    return res.status(401).json({ success: false, message: 'Invalid token' });
+  }
+};
+
+exports.getFirebaseUsers = async (req, res) => {
+    try {
+    // List all users with pagination
+    const maxResults = 100; // Maximum users per request
+    let users = [];
+    let nextPageToken;
+    
+    do {
+      const listUsersResult = await admin.auth().listUsers(maxResults, nextPageToken);
+      users = users.concat(listUsersResult.users);
+      nextPageToken = listUsersResult.pageToken;
+    } while (nextPageToken);
+    
+    const formattedUsers = users.map(user => ({
+      uid: user.uid,
+      email: user.email || 'No email',
+      emailVerified: user.emailVerified || false,
+      displayName: user.displayName || 'No name',
+      phoneNumber: user.phoneNumber || 'No phone',
+      photoURL: user.photoURL || null,
+      disabled: user.disabled || false,
+      metadata: {
+        creationTime: user.metadata.creationTime || null,
+        lastSignInTime: user.metadata.lastSignInTime || null,
+        lastRefreshTime: user.metadata.lastRefreshTime || null
+      },
+      providerData: user.providerData.map(provider => ({
+        providerId: provider.providerId || 'unknown',
+        email: provider.email || 'No email',
+        displayName: provider.displayName || 'No name'
+      })),
+      isAnonymous: !user.email && !user.phoneNumber
+    }));
+
+    res.json({
+      success: true,
+      data: formattedUsers,
+      total: formattedUsers.length
+    });
+  } catch (error) {
+    console.error('Error fetching Firebase users:', error);
+    res.status(500).json({
+      success: false,
+      message: 'Failed to fetch Firebase users',
+      error: error.message
+    });
+  }
+};
 
 // @desc    Get all users
 // @route   GET /api/admin/users
