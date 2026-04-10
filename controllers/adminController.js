@@ -79,7 +79,7 @@ exports.getFirebaseUsers = async (req, res) => {
 // @access  Private/Admin
 exports.getUsers = async (req, res) => {
   try {
-    const users = await User.find().select('-password');
+    const users = await User.find().sort({ createdAt: -1 });
     res.json({
       success: true,
       data: users
@@ -88,6 +88,64 @@ exports.getUsers = async (req, res) => {
     res.status(500).json({
       success: false,
       message: error.message
+    });
+  }
+};
+
+// @desc    Delete user from MongoDB and Firebase
+// @route   DELETE /api/admin/users/:uid
+// @access  Private/Admin
+exports.deleteUser = async (req, res) => {
+  try {
+    const { uid } = req.params;
+    
+    console.log(`Attempting to delete user with UID: ${uid}`);
+    
+    // 1. Delete user from MongoDB
+    const deletedMongoUser = await User.findOneAndDelete({ uid: uid });
+    
+    if (!deletedMongoUser) {
+      console.log(`User with UID ${uid} not found in MongoDB`);
+      // Continue to delete from Firebase even if not in MongoDB
+    } else {
+      console.log(`User deleted from MongoDB: ${deletedMongoUser.email}`);
+    }
+    
+    // 2. Delete user from Firebase Authentication
+    try {
+      await admin.auth().deleteUser(uid);
+      console.log(`User deleted from Firebase Authentication: ${uid}`);
+    } catch (firebaseError) {
+      console.error('Error deleting user from Firebase:', firebaseError);
+      // If user doesn't exist in Firebase, continue
+      if (firebaseError.code === 'auth/user-not-found') {
+        console.log(`User ${uid} not found in Firebase Authentication`);
+      } else {
+        // If there's another Firebase error, we might want to rollback MongoDB deletion
+        // For now, just log it
+        console.error('Firebase deletion error:', firebaseError.message);
+      }
+    }
+    
+    // 3. Delete all transactions associated with this user
+    const deletedTransactions = await Transaction.deleteMany({ user: uid });
+    console.log(`Deleted ${deletedTransactions.deletedCount} transactions for user ${uid}`);
+    
+    res.json({
+      success: true,
+      message: 'User deleted successfully',
+      data: {
+        mongodbDeleted: !!deletedMongoUser,
+        transactionsDeleted: deletedTransactions.deletedCount,
+        userUid: uid
+      }
+    });
+    
+  } catch (error) {
+    console.error('Error deleting user:', error);
+    res.status(500).json({
+      success: false,
+      message: error.message || 'Failed to delete user'
     });
   }
 };
@@ -121,6 +179,19 @@ exports.getDashboardStats = async (req, res) => {
     const totalUsers = await User.countDocuments();
     const totalTransactions = await Transaction.countDocuments();
     const completedTransactions = await Transaction.countDocuments({ status: 'completed' });
+    
+    // Calculate active subscriptions (not expired)
+    const now = new Date();
+    const activeSubscriptions = await User.countDocuments({
+      subscriptionStatus: 'active',
+      subscriptionEndDate: { $gt: now }
+    });
+    
+    // Calculate subscription breakdown
+    const weeklySubscriptions = await User.countDocuments({ subscription: 'weekly', subscriptionStatus: 'active' });
+    const monthlySubscriptions = await User.countDocuments({ subscription: 'monthly', subscriptionStatus: 'active' });
+    const yearlySubscriptions = await User.countDocuments({ subscription: 'yearly', subscriptionStatus: 'active' });
+    
     const totalRevenue = await Transaction.aggregate([
       { $match: { status: 'completed' } },
       { $group: { _id: null, total: { $sum: '$amount' } } }
@@ -132,7 +203,11 @@ exports.getDashboardStats = async (req, res) => {
         totalUsers,
         totalTransactions,
         completedTransactions,
-        totalRevenue: totalRevenue[0]?.total || 0
+        totalRevenue: totalRevenue[0]?.total || 0,
+        activeSubscriptions,
+        weeklySubscriptions,
+        monthlySubscriptions,
+        yearlySubscriptions
       }
     });
   } catch (error) {

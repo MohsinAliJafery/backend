@@ -22,6 +22,7 @@ app.use(cors());
 app.use('/api/payments', require('./routes/payments'));
 app.use('/api/admin', require('./routes/admin'));
 app.use('/api/users', require('./routes/userRoutes'));
+app.use('/api/coupons', require('./routes/coupons'));
 
 // Basic route
 app.get('/', (req, res) => {

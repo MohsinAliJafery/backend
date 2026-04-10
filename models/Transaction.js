@@ -1,27 +1,37 @@
+// backend/models/Transaction.js
 const mongoose = require('mongoose');
 
 const transactionSchema = new mongoose.Schema({
   user: {
     type: String,
-    required: true
+    required: true,
+    index: true
   },
   amount: {
     type: Number,
     required: true
   },
+  originalAmount: {
+    type: Number,
+    default: 0
+  },
+  discountAmount: {
+    type: Number,
+    default: 0
+  },
+  couponCode: {
+    type: String,
+    default: null
+  },
   currency: {
     type: String,
+    required: true,
     default: 'USD'
   },
   paymentMethod: {
     type: String,
-    enum: ['paypal', 'paytm'],
+    enum: ['paypal', 'paytm', 'test'],
     required: true
-  },
-  status: {
-    type: String,
-    enum: ['pending', 'completed', 'failed', 'cancelled'],
-    default: 'pending'
   },
   paymentId: {
     type: String,
@@ -29,25 +39,73 @@ const transactionSchema = new mongoose.Schema({
   },
   orderId: {
     type: String,
-    required: true
+    required: true,
+    unique: true
   },
   subscriptionType: {
     type: String,
-      enum: [
-    'trial_days',
-    'weekly_sub',
-    'monthly_sub',
-    'yearly_sub'
-  ],
+    enum: ['weekly_sub', 'monthly_sub', 'yearly_sub', 'trial_days'],
     required: true
   },
-  payerEmail: String,
-  payerName: String,
-  createdAt: {
-    type: Date,
-    default: Date.now
+  status: {
+    type: String,
+    enum: ['pending', 'completed', 'failed', 'refunded'],
+    default: 'pending'
   },
-  completedAt: Date
+  payerEmail: {
+    type: String,
+    default: null
+  },
+  payerName: {
+    type: String,
+    default: null
+  },
+  captureId: {
+    type: String,
+    default: null
+  },
+  bankTxnId: {
+    type: String,
+    default: null
+  },
+  txnDate: {
+    type: String,
+    default: null
+  },
+  paymentMode: {
+    type: String,
+    default: null
+  },
+  failureReason: {
+    type: String,
+    default: null
+  },
+  failureCode: {
+    type: String,
+    default: null
+  },
+  pendingReason: {
+    type: String,
+    default: null
+  },
+  completedAt: {
+    type: Date,
+    default: null
+  },
+  metadata: {
+    type: Map,
+    of: mongoose.Schema.Types.Mixed,
+    default: {}
+  }
+}, {
+  timestamps: true
 });
+
+// Indexes for better query performance
+transactionSchema.index({ user: 1, createdAt: -1 });
+transactionSchema.index({ orderId: 1 });
+transactionSchema.index({ paymentId: 1 });
+transactionSchema.index({ couponCode: 1 });
+transactionSchema.index({ status: 1 });
 
 module.exports = mongoose.model('Transaction', transactionSchema);

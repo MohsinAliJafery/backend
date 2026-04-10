@@ -1,3 +1,4 @@
+// backend/routes/paymentRoutes.js
 const express = require('express');
 const {
   createPaypalOrder,
@@ -17,7 +18,7 @@ router.post('/paytm/initiate', protect, initiatePaytmPayment);
 router.post('/paytm/callback', paytmCallback);
 router.get('/paytm/callback', paytmCallback);
 router.get('/transactions', protect, getUserTransactions);
-// Add this route in paymentRoutes.js
-router.post('/test-payment', testPayment);
+
+router.post('/test-payment', protect, testPayment);
 
 module.exports = router;

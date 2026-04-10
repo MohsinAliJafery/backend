@@ -1,6 +1,7 @@
 const express = require('express');
 const {
   getUsers,
+  deleteUser,
   getTransactions,
   getDashboardStats,
   getSettings,
@@ -41,6 +42,7 @@ router.use(authorize('admin'));
 
 // Admin routes
 router.get('/users', getUsers);
+router.delete('/users/:uid', deleteUser);
 router.get('/transactions', getTransactions);
 router.get('/stats', getDashboardStats);
 router.get('/firebase-users', getFirebaseUsers);
