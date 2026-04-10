@@ -1,11 +1,31 @@
-// backend/models/Transaction.js
 const mongoose = require('mongoose');
 
 const transactionSchema = new mongoose.Schema({
   user: {
-    type: String,
+    type: String, // Firebase UID
     required: true,
     index: true
+  },
+  // New package fields (replaces subscriptionType)
+  packageId: {
+    type: mongoose.Schema.Types.ObjectId,
+    ref: 'Package',
+    required: false,
+    index: true
+  },
+  packageName: {
+    type: String,
+    required: false
+  },
+  packageDays: {
+    type: Number,
+    required: false
+  },
+  // Keep for backward compatibility, but make optional
+  subscriptionType: {
+    type: String,
+    enum: ['weekly_sub', 'monthly_sub', 'yearly_sub', 'trial_days'],
+    required: false // Changed from true to false
   },
   amount: {
     type: Number,
@@ -13,7 +33,7 @@ const transactionSchema = new mongoose.Schema({
   },
   originalAmount: {
     type: Number,
-    default: 0
+    required: false
   },
   discountAmount: {
     type: Number,
@@ -21,12 +41,12 @@ const transactionSchema = new mongoose.Schema({
   },
   couponCode: {
     type: String,
-    default: null
+    required: false
   },
   currency: {
     type: String,
-    required: true,
-    default: 'USD'
+    default: 'USD',
+    required: true
   },
   paymentMethod: {
     type: String,
@@ -42,70 +62,66 @@ const transactionSchema = new mongoose.Schema({
     required: true,
     unique: true
   },
-  subscriptionType: {
-    type: String,
-    enum: ['weekly_sub', 'monthly_sub', 'yearly_sub', 'trial_days'],
-    required: true
-  },
   status: {
     type: String,
     enum: ['pending', 'completed', 'failed', 'refunded'],
-    default: 'pending'
+    default: 'pending',
+    required: true
   },
-  payerEmail: {
-    type: String,
-    default: null
+  completedAt: {
+    type: Date
   },
-  payerName: {
-    type: String,
-    default: null
-  },
+  // PayPal specific fields
   captureId: {
     type: String,
-    default: null
+    required: false
   },
+  paypalOrderId: {
+    type: String,
+    required: false
+  },
+  // PayTM specific fields
   bankTxnId: {
     type: String,
-    default: null
+    required: false
   },
   txnDate: {
     type: String,
-    default: null
+    required: false
   },
   paymentMode: {
     type: String,
-    default: null
+    required: false
   },
-  failureReason: {
+  // Payer information
+  payerEmail: {
     type: String,
-    default: null
+    required: false
   },
-  failureCode: {
+  payerName: {
     type: String,
-    default: null
+    required: false
   },
-  pendingReason: {
-    type: String,
-    default: null
-  },
-  completedAt: {
+  createdAt: {
     type: Date,
-    default: null
+    default: Date.now
   },
-  metadata: {
-    type: Map,
-    of: mongoose.Schema.Types.Mixed,
-    default: {}
+  updatedAt: {
+    type: Date,
+    default: Date.now
   }
-}, {
-  timestamps: true
 });
 
-// Indexes for better query performance
+// Create indexes for better query performance
 transactionSchema.index({ user: 1, createdAt: -1 });
 transactionSchema.index({ orderId: 1 });
-transactionSchema.index({ paymentId: 1 });
-transactionSchema.index({ couponCode: 1 });
 transactionSchema.index({ status: 1 });
+transactionSchema.index({ packageId: 1 });
+
+// Update the updatedAt field on save
+transactionSchema.pre('save', function(next) {
+  this.updatedAt = Date.now();
+  next();
+});
 
 module.exports = mongoose.model('Transaction', transactionSchema);

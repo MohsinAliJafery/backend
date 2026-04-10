@@ -57,7 +57,11 @@ const couponSchema = new mongoose.Schema({
   description: {
     type: String,
     default: ''
-  }
+  },
+  applicablePackages: [{
+  type: mongoose.Schema.Types.ObjectId,
+  ref: 'Package'
+}],
 }, {
   timestamps: true
 });

@@ -3,11 +3,12 @@ const paypalClient = require('../config/paypal');
 const paypal = require('@paypal/checkout-server-sdk');
 const Transaction = require('../models/Transaction');
 const Settings = require('../models/Settings');
+const Package = require('../models/Package'); // Import Package model
 const Coupon = require('../models/Coupon');
-const User = require('../models/User'); // Import User model
+const User = require('../models/User');
 const PaytmChecksum = require('../utils/paytmChecksum');
 
-// Temporary storage for PayTM transaction data (use Redis in production)
+// Temporary storage for transaction data (use Redis in production)
 const tempStorage = new Map();
 
 // Helper functions for temporary storage
@@ -25,51 +26,18 @@ async function deleteTempTransactionData(orderId) {
   tempStorage.delete(orderId);
 }
 
-// Helper function to calculate subscription end date
-function getSubscriptionEndDate(subscriptionType) {
-  const now = new Date();
-  switch (subscriptionType) {
-    case 'weekly_sub':
-      return new Date(now.setDate(now.getDate() + 7));
-    case 'monthly_sub':
-      return new Date(now.setMonth(now.getMonth() + 1));
-    case 'yearly_sub':
-      return new Date(now.setFullYear(now.getFullYear() + 1));
-    case 'trial_days':
-      return new Date(now.setDate(now.getDate() + 7));
-    default:
-      return new Date(now.setMonth(now.getMonth() + 1));
-  }
-}
-
 // Helper function to update user subscription in MongoDB
-async function updateUserSubscription(uid, subscriptionType, transactionId, paymentMethod) {
+async function updateUserSubscription(uid, packageId, transactionId, paymentMethod, packageData) {
   try {
-    const endDate = getSubscriptionEndDate(subscriptionType);
-    
-    // Convert subscription type to readable format
-    let subscriptionPlan = '';
-    switch (subscriptionType) {
-      case 'weekly_sub':
-        subscriptionPlan = 'weekly';
-        break;
-      case 'monthly_sub':
-        subscriptionPlan = 'monthly';
-        break;
-      case 'yearly_sub':
-        subscriptionPlan = 'yearly';
-        break;
-      case 'trial_days':
-        subscriptionPlan = 'trial';
-        break;
-      default:
-        subscriptionPlan = 'monthly';
-    }
+    // Calculate end date based on package days
+    const now = new Date();
+    const endDate = new Date(now.setDate(now.getDate() + packageData.days));
     
     const updatedUser = await User.findOneAndUpdate(
       { uid: uid },
       {
-        subscription: subscriptionPlan,
+        subscription: packageId,
+        subscriptionPlan: packageData.name,
         subscriptionStatus: 'active',
         subscriptionStartDate: new Date(),
         subscriptionEndDate: endDate,
@@ -86,7 +54,7 @@ async function updateUserSubscription(uid, subscriptionType, transactionId, paym
       return false;
     }
     
-    console.log(`User subscription updated for ${uid}: ${subscriptionPlan} until ${endDate}`);
+    console.log(`User subscription updated for ${uid}: ${packageData.name} until ${endDate}`);
     return true;
   } catch (error) {
     console.error('Error updating user subscription:', error);
@@ -99,16 +67,36 @@ async function updateUserSubscription(uid, subscriptionType, transactionId, paym
 // @access  Private
 exports.createPaypalOrder = async (req, res) => {
   try {
-    const { subscriptionType, couponCode, discountedAmount } = req.body;
+    const { packageId, couponCode, discountedAmount } = req.body;
     
-    // Get settings or use defaults
+    if (!packageId) {
+      return res.status(400).json({
+        success: false,
+        message: 'Package ID is required'
+      });
+    }
+    
+    // Get the package details
+    const packageData = await Package.findById(packageId);
+    if (!packageData) {
+      return res.status(404).json({
+        success: false,
+        message: 'Package not found'
+      });
+    }
+    
+    if (!packageData.isActive) {
+      return res.status(400).json({
+        success: false,
+        message: 'This package is currently not available'
+      });
+    }
+    
+    // Get settings
     let settings = await Settings.findOne();
     if (!settings) {
       settings = await Settings.create({
         freeTrialDays: 7,
-        weeklyPrice: 9.99,
-        monthlyPrice: 29.99,
-        yearlyPrice: 299.99,
         currency: 'USD',
         paypalEnabled: true,
         paytmEnabled: true
@@ -122,27 +110,7 @@ exports.createPaypalOrder = async (req, res) => {
       });
     }
     
-    let originalAmount;
-    switch (subscriptionType) {
-      case 'weekly_sub':
-        originalAmount = settings.weeklyPrice;
-        break;
-      case 'monthly_sub':
-        originalAmount = settings.monthlyPrice;
-        break;
-      case 'yearly_sub':
-        originalAmount = settings.yearlyPrice;
-        break;
-      case 'trial_days':
-        originalAmount = 0.01; // PayPal minimum
-        break;
-      default:
-        return res.status(400).json({
-          success: false,
-          message: 'Invalid subscription type'
-        });
-    }
-
+    let originalAmount = packageData.price;
     let finalAmount = originalAmount;
     let appliedCoupon = null;
     let discountAmount = 0;
@@ -157,31 +125,26 @@ exports.createPaypalOrder = async (req, res) => {
       });
       
       if (coupon && coupon.usedCount < coupon.usageLimit) {
-        if (coupon.applicablePlans && coupon.applicablePlans.length > 0) {
-          if (coupon.applicablePlans.includes(subscriptionType)) {
-            if (coupon.discountType === 'percentage') {
-              discountAmount = (originalAmount * coupon.discountValue) / 100;
-              if (coupon.maxDiscountAmount > 0 && discountAmount > coupon.maxDiscountAmount) {
-                discountAmount = coupon.maxDiscountAmount;
-              }
-            } else {
-              discountAmount = Math.min(coupon.discountValue, originalAmount);
-            }
-            finalAmount = originalAmount - discountAmount;
-            appliedCoupon = coupon;
+        // Check if coupon applies to this package
+        if (coupon.applicablePackages && coupon.applicablePackages.length > 0) {
+          if (!coupon.applicablePackages.includes(packageId)) {
+            return res.status(400).json({
+              success: false,
+              message: 'This coupon is not valid for the selected package'
+            });
+          }
+        }
+        
+        if (coupon.discountType === 'percentage') {
+          discountAmount = (originalAmount * coupon.discountValue) / 100;
+          if (coupon.maxDiscountAmount > 0 && discountAmount > coupon.maxDiscountAmount) {
+            discountAmount = coupon.maxDiscountAmount;
           }
         } else {
-          if (coupon.discountType === 'percentage') {
-            discountAmount = (originalAmount * coupon.discountValue) / 100;
-            if (coupon.maxDiscountAmount > 0 && discountAmount > coupon.maxDiscountAmount) {
-              discountAmount = coupon.maxDiscountAmount;
-            }
-          } else {
-            discountAmount = Math.min(coupon.discountValue, originalAmount);
-          }
-          finalAmount = originalAmount - discountAmount;
-          appliedCoupon = coupon;
+          discountAmount = Math.min(coupon.discountValue, originalAmount);
         }
+        finalAmount = originalAmount - discountAmount;
+        appliedCoupon = coupon;
       }
     }
 
@@ -192,7 +155,8 @@ exports.createPaypalOrder = async (req, res) => {
     finalAmount = Math.max(0, finalAmount).toFixed(2);
     
     console.log('Creating PayPal order:', {
-      subscriptionType,
+      packageId,
+      packageName: packageData.name,
       originalAmount,
       finalAmount,
       couponCode: couponCode || 'none',
@@ -214,16 +178,18 @@ exports.createPaypalOrder = async (req, res) => {
             }
           }
         },
-        description: `${subscriptionType} subscription`,
+        description: `${packageData.name} Package`,
         custom_id: JSON.stringify({
-          subscriptionType,
+          packageId,
+          packageName: packageData.name,
+          packageDays: packageData.days,
           originalAmount,
           couponCode: couponCode || null,
           discountAmount: discountAmount
         })
       }],
       application_context: {
-        brand_name: 'Payment Portal',
+        brand_name: 'Kidzet',
         landing_page: 'LOGIN',
         user_action: 'PAY_NOW',
         return_url: `${process.env.CLIENT_URL || 'http://localhost:3000'}/dashboard`,
@@ -235,7 +201,14 @@ exports.createPaypalOrder = async (req, res) => {
     
     await saveTempTransactionData(order.result.id, {
       userId: req.user.uid,
-      subscriptionType: subscriptionType,
+      packageId: packageId,
+      packageData: {
+        name: packageData.name,
+        days: packageData.days,
+        price: packageData.price,
+        devices: packageData.devices,
+        features: packageData.features
+      },
       originalAmount: originalAmount,
       finalAmount: parseFloat(finalAmount),
       discountAmount: discountAmount,
@@ -253,7 +226,8 @@ exports.createPaypalOrder = async (req, res) => {
         amount: finalAmount,
         originalAmount: originalAmount,
         discountApplied: discountAmount,
-        subscriptionType: subscriptionType,
+        packageId: packageId,
+        packageName: packageData.name,
         couponInfo: appliedCoupon ? {
           code: appliedCoupon.code,
           discountAmount: discountAmount
@@ -317,7 +291,7 @@ exports.capturePaypalOrder = async (req, res) => {
         currency: currency
       });
       
-      // Create transaction
+      // Create transaction - WITHOUT subscriptionType
       const transactionData = {
         user: tempData.userId,
         amount: capturedAmount,
@@ -326,7 +300,9 @@ exports.capturePaypalOrder = async (req, res) => {
         paymentMethod: 'paypal',
         paymentId: orderID,
         orderId: orderID,
-        subscriptionType: tempData.subscriptionType,
+        packageId: tempData.packageId,
+        packageName: tempData.packageData.name,
+        packageDays: tempData.packageData.days,
         status: 'completed',
         completedAt: new Date(),
         payerEmail: capture.result.payer.email_address,
@@ -335,10 +311,13 @@ exports.capturePaypalOrder = async (req, res) => {
         paypalOrderId: capture.result.id
       };
       
+      // Only add coupon fields if they exist
       if (tempData.couponCode) {
         transactionData.couponCode = tempData.couponCode;
         transactionData.discountAmount = tempData.discountAmount;
       }
+      
+      console.log('Creating transaction with data:', transactionData);
       
       const transaction = await Transaction.create(transactionData);
       
@@ -356,9 +335,10 @@ exports.capturePaypalOrder = async (req, res) => {
       // Update user subscription in MongoDB
       const subscriptionUpdated = await updateUserSubscription(
         tempData.userId,
-        tempData.subscriptionType,
+        tempData.packageId,
         transaction._id.toString(),
-        'paypal'
+        'paypal',
+        tempData.packageData
       );
       
       if (!subscriptionUpdated) {
@@ -373,7 +353,8 @@ exports.capturePaypalOrder = async (req, res) => {
         data: {
           capture: captureDetails,
           transaction: transaction,
-          orderId: orderID
+          orderId: orderID,
+          package: tempData.packageData
         }
       });
     } else {
@@ -432,19 +413,28 @@ exports.getUserTransactions = async (req, res) => {
 // @access  Private
 exports.initiatePaytmPayment = async (req, res) => {
   try {
-    const { subscriptionType, amount, currency, user, couponCode } = req.body;
+    const { packageId, amount, currency, user, couponCode } = req.body;
     
     console.log('PayTM initiation request:', {
-      subscriptionType,
+      packageId,
       amount,
       userId: user?.uid,
       couponCode: couponCode || 'none'
     });
     
-    if (!subscriptionType || !amount || !user?.uid) {
+    if (!packageId || !amount || !user?.uid) {
       return res.status(400).json({ 
         success: false, 
         message: 'Missing required fields' 
+      });
+    }
+
+    // Get package details
+    const packageData = await Package.findById(packageId);
+    if (!packageData) {
+      return res.status(404).json({
+        success: false,
+        message: 'Package not found'
       });
     }
 
@@ -452,9 +442,6 @@ exports.initiatePaytmPayment = async (req, res) => {
     if (!settings) {
       settings = await Settings.create({
         freeTrialDays: 7,
-        weeklyPrice: 9.99,
-        monthlyPrice: 29.99,
-        yearlyPrice: 299.99,
         currency: 'INR',
         paypalEnabled: true,
         paytmEnabled: true
@@ -474,31 +461,26 @@ exports.initiatePaytmPayment = async (req, res) => {
       });
       
       if (coupon && coupon.usedCount < coupon.usageLimit) {
-        if (coupon.applicablePlans && coupon.applicablePlans.length > 0) {
-          if (coupon.applicablePlans.includes(subscriptionType)) {
-            if (coupon.discountType === 'percentage') {
-              discountAmount = (finalAmount * coupon.discountValue) / 100;
-              if (coupon.maxDiscountAmount > 0 && discountAmount > coupon.maxDiscountAmount) {
-                discountAmount = coupon.maxDiscountAmount;
-              }
-            } else {
-              discountAmount = Math.min(coupon.discountValue, finalAmount);
-            }
-            finalAmount = finalAmount - discountAmount;
-            appliedCoupon = coupon;
+        // Check if coupon applies to this package
+        if (coupon.applicablePackages && coupon.applicablePackages.length > 0) {
+          if (!coupon.applicablePackages.includes(packageId)) {
+            return res.status(400).json({
+              success: false,
+              message: 'This coupon is not valid for the selected package'
+            });
+          }
+        }
+        
+        if (coupon.discountType === 'percentage') {
+          discountAmount = (finalAmount * coupon.discountValue) / 100;
+          if (coupon.maxDiscountAmount > 0 && discountAmount > coupon.maxDiscountAmount) {
+            discountAmount = coupon.maxDiscountAmount;
           }
         } else {
-          if (coupon.discountType === 'percentage') {
-            discountAmount = (finalAmount * coupon.discountValue) / 100;
-            if (coupon.maxDiscountAmount > 0 && discountAmount > coupon.maxDiscountAmount) {
-              discountAmount = coupon.maxDiscountAmount;
-            }
-          } else {
-            discountAmount = Math.min(coupon.discountValue, finalAmount);
-          }
-          finalAmount = finalAmount - discountAmount;
-          appliedCoupon = coupon;
+          discountAmount = Math.min(coupon.discountValue, finalAmount);
         }
+        finalAmount = finalAmount - discountAmount;
+        appliedCoupon = coupon;
       }
     }
 
@@ -512,9 +494,16 @@ exports.initiatePaytmPayment = async (req, res) => {
     
     await saveTempTransactionData(orderId, {
       userId: user.uid,
+      packageId: packageId,
+      packageData: {
+        name: packageData.name,
+        days: packageData.days,
+        price: packageData.price,
+        devices: packageData.devices,
+        features: packageData.features
+      },
       originalAmount: parseFloat(amount),
       finalAmount: parseFloat(finalAmount),
-      subscriptionType: subscriptionType,
       couponCode: appliedCoupon ? appliedCoupon.code : null,
       discountAmount: discountAmount,
       currency: 'INR',
@@ -553,6 +542,8 @@ exports.initiatePaytmPayment = async (req, res) => {
         amount: finalAmount,
         originalAmount: amount,
         discountAmount: discountAmount,
+        packageId: packageId,
+        packageName: packageData.name,
         paytmParams: {
           ...paytmParams,
           CHECKSUMHASH: checksum
@@ -649,7 +640,9 @@ exports.paytmCallback = async (req, res) => {
         paymentMethod: 'paytm',
         paymentId: ORDERID,
         orderId: ORDERID,
-        subscriptionType: tempData.subscriptionType,
+        packageId: tempData.packageId,
+        packageName: tempData.packageData.name,
+        packageDays: tempData.packageData.days,
         status: 'completed',
         completedAt: new Date(),
         payerEmail: callbackData.EMAIL,
@@ -678,9 +671,10 @@ exports.paytmCallback = async (req, res) => {
       // Update user subscription in MongoDB
       const subscriptionUpdated = await updateUserSubscription(
         tempData.userId,
-        tempData.subscriptionType,
+        tempData.packageId,
         transaction._id.toString(),
-        'paytm'
+        'paytm',
+        tempData.packageData
       );
       
       if (!subscriptionUpdated) {
@@ -734,12 +728,28 @@ exports.paytmCallback = async (req, res) => {
 // @access  Private
 exports.testPayment = async (req, res) => {
   try {
-    const { amount, plan, couponCode } = req.body;
+    const { packageId, amount, couponCode } = req.body;
     const user = req.user;
+    
+    if (!packageId) {
+      return res.status(400).json({
+        success: false,
+        message: 'Package ID is required'
+      });
+    }
+    
+    // Get package details
+    const packageData = await Package.findById(packageId);
+    if (!packageData) {
+      return res.status(404).json({
+        success: false,
+        message: 'Package not found'
+      });
+    }
     
     const orderId = `TEST_${Date.now()}_${Math.random().toString(36).substr(2, 9)}`;
     
-    let finalAmount = parseFloat(amount || '0.09');
+    let finalAmount = parseFloat(amount || packageData.price);
     let discountAmount = 0;
     let appliedCoupon = null;
     
@@ -752,31 +762,26 @@ exports.testPayment = async (req, res) => {
       });
       
       if (coupon && coupon.usedCount < coupon.usageLimit) {
-        if (coupon.applicablePlans && coupon.applicablePlans.length > 0) {
-          if (coupon.applicablePlans.includes(plan)) {
-            if (coupon.discountType === 'percentage') {
-              discountAmount = (finalAmount * coupon.discountValue) / 100;
-              if (coupon.maxDiscountAmount > 0 && discountAmount > coupon.maxDiscountAmount) {
-                discountAmount = coupon.maxDiscountAmount;
-              }
-            } else {
-              discountAmount = Math.min(coupon.discountValue, finalAmount);
-            }
-            finalAmount = finalAmount - discountAmount;
-            appliedCoupon = coupon;
+        // Check if coupon applies to this package
+        if (coupon.applicablePackages && coupon.applicablePackages.length > 0) {
+          if (!coupon.applicablePackages.includes(packageId)) {
+            return res.status(400).json({
+              success: false,
+              message: 'This coupon is not valid for the selected package'
+            });
+          }
+        }
+        
+        if (coupon.discountType === 'percentage') {
+          discountAmount = (finalAmount * coupon.discountValue) / 100;
+          if (coupon.maxDiscountAmount > 0 && discountAmount > coupon.maxDiscountAmount) {
+            discountAmount = coupon.maxDiscountAmount;
           }
         } else {
-          if (coupon.discountType === 'percentage') {
-            discountAmount = (finalAmount * coupon.discountValue) / 100;
-            if (coupon.maxDiscountAmount > 0 && discountAmount > coupon.maxDiscountAmount) {
-              discountAmount = coupon.maxDiscountAmount;
-            }
-          } else {
-            discountAmount = Math.min(coupon.discountValue, finalAmount);
-          }
-          finalAmount = finalAmount - discountAmount;
-          appliedCoupon = coupon;
+          discountAmount = Math.min(coupon.discountValue, finalAmount);
         }
+        finalAmount = finalAmount - discountAmount;
+        appliedCoupon = coupon;
       }
     }
     
@@ -785,12 +790,14 @@ exports.testPayment = async (req, res) => {
     const transactionData = {
       user: user.uid,
       amount: parseFloat(finalAmount),
-      originalAmount: parseFloat(amount || '0.09'),
-      currency: 'INR',
+      originalAmount: parseFloat(amount || packageData.price),
+      currency: 'USD',
       paymentMethod: 'test',
       paymentId: orderId,
       orderId: orderId,
-      subscriptionType: plan,
+      packageId: packageId,
+      packageName: packageData.name,
+      packageDays: packageData.days,
       status: 'completed',
       completedAt: new Date()
     };
@@ -812,9 +819,10 @@ exports.testPayment = async (req, res) => {
     // Update user subscription in MongoDB
     const subscriptionUpdated = await updateUserSubscription(
       user.uid,
-      plan,
+      packageId,
       transaction._id.toString(),
-      'test'
+      'test',
+      packageData
     );
     
     if (!subscriptionUpdated) {
@@ -828,8 +836,10 @@ exports.testPayment = async (req, res) => {
         orderId,
         transactionId: transaction._id,
         amount: finalAmount,
-        originalAmount: amount,
+        originalAmount: amount || packageData.price,
         discountAmount: discountAmount,
+        packageId: packageId,
+        packageName: packageData.name,
         redirectUrl: `${process.env.FRONTEND_URL}/payment-success?orderId=${orderId}&status=TXN_SUCCESS&amount=${finalAmount}&test=true`
       }
     });
@@ -864,7 +874,8 @@ exports.verifyPayment = async (req, res) => {
       data: {
         status: transaction.status,
         amount: transaction.amount,
-        subscriptionType: transaction.subscriptionType,
+        packageId: transaction.packageId,
+        packageName: transaction.packageName,
         completedAt: transaction.completedAt
       }
     });
@@ -890,13 +901,30 @@ exports.getSubscriptionDetails = async (req, res) => {
       });
     }
     
+    // Get package details if user has a subscription
+    let packageDetails = null;
+    if (user.subscription && user.subscription !== 'free_trial') {
+      const packageData = await Package.findById(user.subscription);
+      if (packageData) {
+        packageDetails = {
+          id: packageData._id,
+          name: packageData.name,
+          days: packageData.days,
+          devices: packageData.devices,
+          features: packageData.features
+        };
+      }
+    }
+    
     const subscription = {
       type: user.subscription || 'free_trial',
+      planName: user.subscriptionPlan || 'Free Trial',
       status: user.subscriptionStatus || 'inactive',
       startDate: user.subscriptionStartDate || null,
       endDate: user.subscriptionEndDate || null,
       lastPaymentDate: user.lastPaymentDate || null,
-      lastPaymentMethod: user.lastPaymentMethod || null
+      lastPaymentMethod: user.lastPaymentMethod || null,
+      packageDetails: packageDetails
     };
     
     // Check if subscription is expired
@@ -912,6 +940,26 @@ exports.getSubscriptionDetails = async (req, res) => {
     res.json({
       success: true,
       data: subscription
+    });
+  } catch (error) {
+    res.status(500).json({
+      success: false,
+      message: error.message
+    });
+  }
+};
+
+// @desc    Get available packages (public)
+// @route   GET /api/payments/packages
+// @access  Public
+exports.getAvailablePackages = async (req, res) => {
+  try {
+    const packages = await Package.find({ isActive: true })
+      .sort({ order: 1, price: 1 });
+    
+    res.json({
+      success: true,
+      data: packages
     });
   } catch (error) {
     res.status(500).json({
